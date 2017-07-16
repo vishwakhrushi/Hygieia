@@ -32,6 +32,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static com.capitalone.dashboard.util.PipelineUtils.isMoveCommitToBuild;
+import static com.capitalone.dashboard.util.PipelineUtils.processPreviousFailedBuilds;
+
 @org.springframework.stereotype.Component
 public class BuildEventListener extends HygieiaMongoEventListener<Build> {
     private final DashboardRepository dashboardRepository;
@@ -97,8 +100,6 @@ public class BuildEventListener extends HygieiaMongoEventListener<Build> {
                 PipelineCommit commit = new PipelineCommit(scm, build.getStartTime());
                 pipeline.addCommit(PipelineStage.BUILD.getName(), commit);
             }
-
-            boolean hasFailedBuilds = !pipeline.getFailedBuilds().isEmpty();
             processPreviousFailedBuilds(build, pipeline);
 
 
@@ -113,71 +114,14 @@ public class BuildEventListener extends HygieiaMongoEventListener<Build> {
             Map<String, PipelineCommit> buildStageCommits = pipeline.getCommitsByEnvironmentName(PipelineStage.BUILD.getName());
             for (String rev : commitStageCommits.keySet()) {
                 PipelineCommit commit = commitStageCommits.get(rev);
-                if ((commit.getScmCommitTimestamp() < build.getStartTime()) && !buildStageCommits.containsKey(rev) && isMoveCommitToBuild(build, commit)) {
+                if ((commit.getScmCommitTimestamp() < build.getStartTime()) && !buildStageCommits.containsKey(rev) && isMoveCommitToBuild(build, commit, commitRepository)) {
                     pipeline.addCommit(PipelineStage.BUILD.getName(), commit);
                 }
             }
             pipelineRepository.save(pipeline);
-            if (hasFailedBuilds) {
-                buildRepository.save(build);
-            }
         }
     }
 
-
-    private boolean isMoveCommitToBuild(Build build, SCM scm) {
-        List<Commit> commitsFromRepo = getCommitsFromCommitRepo(scm);
-        List<RepoBranch> codeReposFromBuild = build.getCodeRepos();
-        Set<String> codeRepoUrlsFromCommits = new HashSet<>();
-        for (Commit c : commitsFromRepo) {
-            codeRepoUrlsFromCommits.add(getRepoNameOnly(c.getScmUrl()));
-        }
-
-        for (RepoBranch rb : codeReposFromBuild) {
-            if (codeRepoUrlsFromCommits.contains(getRepoNameOnly(rb.getUrl()))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-
-    private String getRepoNameOnly(String url) {
-        try {
-            URL temp = new URL(url);
-            return temp.getHost() + temp.getPath();
-        } catch (MalformedURLException e) {
-            return url;
-        }
-    }
-
-    /**
-     * Iterate over failed builds, if the failed build collector item id matches the successful builds collector item id
-     * take all the commits from the changeset of the failed build and add them to the pipeline and also to the changeset
-     * of the successful build.  Then remove the failed build from the collection after it has been processed.
-     *
-     * @param successfulBuild
-     * @param pipeline
-     */
-    private void processPreviousFailedBuilds(Build successfulBuild, Pipeline pipeline) {
-
-        if (!pipeline.getFailedBuilds().isEmpty()) {
-            Iterator<Build> failedBuilds = pipeline.getFailedBuilds().iterator();
-
-            while (failedBuilds.hasNext()) {
-                Build b = failedBuilds.next();
-                if (b.getCollectorItemId().equals(successfulBuild.getCollectorItemId())) {
-                    for (SCM scm : b.getSourceChangeSet()) {
-                        PipelineCommit failedBuildCommit = new PipelineCommit(scm, successfulBuild.getStartTime());
-                        pipeline.addCommit(PipelineStage.BUILD.getName(), failedBuildCommit);
-                        successfulBuild.getSourceChangeSet().add(scm);
-                    }
-                    failedBuilds.remove();
-
-                }
-            }
-        }
-    }
 
     /**
      * Finds all of the dashboards for a given build way of the build by:
@@ -202,9 +146,6 @@ public class BuildEventListener extends HygieiaMongoEventListener<Build> {
         return dashboardRepository.findByApplicationComponentsIn(components);
     }
 
-    private List<Commit> getCommitsFromCommitRepo(SCM scm) {
-        return commitRepository.findByScmRevisionNumber(scm.getScmRevisionNumber());
-    }
 
     private CollectorItem getCollectorItem(ObjectId id) {
         return collectorItemRepository.findOne(id);
