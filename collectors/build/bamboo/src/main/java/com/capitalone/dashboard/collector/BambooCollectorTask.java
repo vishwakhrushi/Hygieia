@@ -12,6 +12,7 @@ import com.capitalone.dashboard.repository.BuildRepository;
 import com.capitalone.dashboard.repository.ComponentRepository;
 import com.capitalone.dashboard.repository.BambooCollectorRepository;
 import com.capitalone.dashboard.repository.BambooJobRepository;
+import com.google.common.collect.Lists;
 import org.apache.commons.lang3.StringUtils;
 import org.bson.types.ObjectId;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -193,7 +194,11 @@ public class BambooCollectorTask extends CollectorTask<BambooCollector> {
 //            LOG.info("Enabled Job Name: " + job.getJobName());
             if (job.isPushed()) {LOG.info("Job Pushed already: " + job.getJobName());continue;}
 //            LOG.info("No of builds by job:"+ buildsByJob.get(job));
-            for (Build buildSummary : nullSafe(buildsByJob.get(job))) {
+            // process new builds in the order of their build numbers - this has implication to handling of commits in BuildEventListener
+            ArrayList<Build> builds = Lists.newArrayList(nullSafe(buildsByJob.get(job)));
+            builds.sort((Build b1, Build b2)->Integer.valueOf(b1.getNumber()) - Integer.valueOf(b2.getNumber()));
+
+            for (Build buildSummary : builds) {
 //              LOG.info("Build Summary: " + buildSummary
 //                  .getBuildUrl());
                 if (isNewBuild(job, buildSummary)) {
